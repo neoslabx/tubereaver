@@ -2,8 +2,10 @@
 
 ![Python Version](https://img.shields.io/badge/python-3.12%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
+![Platform](https://img.shields.io/badge/platform-Ubuntu%2022.04%2B%20|%20Windows%2010%2B%20|%20macOS-lightgrey)
 
-**TubeReaver** is a powerful and elegant **GUI-based YouTube downloader** built with **PyQt6** and **pytubefix**. It allows downloading **videos, playlists, or audio tracks** with tagging, progress tracking, and full metadata support — all without touching the terminal.
+**TubeReaver** is a powerful and elegant **GUI-based YouTube downloader** built with **PyQt6** and **pytubefix**.  
+It allows downloading **videos, playlists, or audio tracks** with tagging, progress tracking, and full metadata support — all without touching the terminal.
 
 * * *
 
@@ -35,23 +37,25 @@
 
 ## Requirements
 
-- Ubuntu 22.04+ (or Debian-based)
 - Python **3.9+**
 - Packages:
 
 ```bash
 sudo apt update
-sudo apt install -y python3-pyqt6 python3-pyqt6.qt6-tools trash-cli
-```
+sudo apt install -y python3-pyqt6 python3-pyqt6.qt6-tools ffmpeg
+````
+
+* `pytubefix` (included in source)
+* `ffmpeg` required for audio conversion/tagging
 
 * * *
 
 ## Installation
 
-Download the latest DEB version from the [releases](https://github.com/neoslabx/blitzclean/releases/) section and use the following command:
+Download the latest DEB version from the [releases](https://github.com/neoslabx/tubereaver/releases/) section and use the following command:
 
 ```bash
-sudo dpkg -i blitzclean_*_all.deb
+sudo dpkg -i tubereaver_*_all.deb
 ```
 
 * * *
