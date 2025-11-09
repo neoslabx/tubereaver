@@ -18,6 +18,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtCore import QThread
 from PyQt6.QtGui import QAction
 from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtWidgets import QCheckBox
 from PyQt6.QtWidgets import QComboBox
@@ -501,7 +503,6 @@ class DialogPrefs(QDialog):
         self.resize(780, 560)
         self.settings = settings.copy()
 
-        # Ensure defaults
         self.settings.setdefault("outputdir", str(Path.home() / "Downloads"))
         self.settings.setdefault("default_mode", "Highest MP4")
         self.settings.setdefault("audiotype", "m4a")
@@ -514,7 +515,6 @@ class DialogPrefs(QDialog):
         self.passwordmemory = ""
         tabs = QTabWidget(self)
 
-        # --- General tab ---
         wgen = QWidget()
         g = QFormLayout(wgen)
 
@@ -555,7 +555,6 @@ class DialogPrefs(QDialog):
         g.addRow(QLabel("Filename suffix:"), self.editsuffix)
         g.addRow(QLabel("Default iTag:"), self.cmbitag)
 
-        # --- Authentication tab ---
         wauth = QWidget()
         h = QFormLayout(wauth)
 
@@ -889,10 +888,19 @@ class DownloadWorker(QThread):
         self.anyerror = False
         self.errmsg = ""
 
+    # Function 'run'
+    def run(self) -> None:
+        """
+        Qt thread entry point delegating to download logic.
+        Keeps heavy download operations off the main GUI thread.
+        Uses startdownloads() to perform the actual work safely.
+        """
+        self.startdownloads()
+
     # Function 'convtomp3'
     @staticmethod
     def convtomp3(inputfile: Path, meta: Dict[str, str] | None = None, bitrate: str = "192k",
-                  samplerate: str = "44100", coverimage: Optional[Path] = None) -> Path:
+        samplerate: str = "44100", coverimage: Optional[Path] = None) -> Path:
         """
         Convert an input audio file to MP3 format using FFmpeg with metadata.
         Optionally embeds a cover image and ID3 tags, then deletes the source file.
@@ -1022,6 +1030,8 @@ class DownloadWorker(QThread):
         def callbackprogress(stream, chunk, rembytes):
             """Inner callback used by pytubefix to report per-chunk progress."""
             try:
+                if self.isInterruptionRequested():
+                    raise RuntimeError("Download interrupted by user.")
                 total = getattr(stream, "filesize", None) or getattr(stream, "filesize_approx", None)
                 if not total:
                     return progressdownload(stream, chunk, rembytes)
@@ -1095,6 +1105,9 @@ class DownloadWorker(QThread):
         Selects the appropriate stream (itag, audio-only, or highest resolution).
         Emits row start, progress, status, and completion signals for the GUI.
         """
+        if self.isInterruptionRequested():
+            raise RuntimeError("Download interrupted by user.")
+
         outdir = self.prepareoutput()
         rowkey = f"{self.task.url}::0"
 
@@ -1115,6 +1128,8 @@ class DownloadWorker(QThread):
             stream = yt.streams.get_by_itag(self.task.itag)
             if not stream:
                 raise RuntimeError(f"itag {self.task.itag} not found for this video.")
+            if self.isInterruptionRequested():
+                raise RuntimeError("Download interrupted by user.")
             saved = (
                 stream.download(output_path=str(outdir), filename=base)
                 if base
@@ -1124,6 +1139,8 @@ class DownloadWorker(QThread):
 
         elif self.task.mode == "Audio-only":
             stream = yt.streams.get_audio_only()
+            if self.isInterruptionRequested():
+                raise RuntimeError("Download interrupted by user.")
             saved = (
                 stream.download(output_path=str(outdir), filename=base)
                 if base
@@ -1137,6 +1154,8 @@ class DownloadWorker(QThread):
 
         else:
             stream = yt.streams.get_highest_resolution()
+            if self.isInterruptionRequested():
+                raise RuntimeError("Download interrupted by user.")
             saved = (
                 stream.download(output_path=str(outdir), filename=base)
                 if base
@@ -1165,6 +1184,11 @@ class DownloadWorker(QThread):
 
         index = 0
         for vid in pl.videos:
+            if self.isInterruptionRequested():
+                self.anyerror = True
+                self.errmsg = "Download interrupted by user."
+                break
+
             rowkey = f"{vid.watch_url}::{index}"
             yt = YouTube(
                 vid.watch_url,
@@ -1178,6 +1202,10 @@ class DownloadWorker(QThread):
 
             if self.task.mode == "Audio-only":
                 stream = yt.streams.get_audio_only()
+                if self.isInterruptionRequested():
+                    self.anyerror = True
+                    self.errmsg = "Download interrupted by user."
+                    break
                 saved = (
                     stream.download(output_path=str(outdir), filename=base)
                     if base
@@ -1198,6 +1226,10 @@ class DownloadWorker(QThread):
                     )
                     index += 1
                     continue
+                if self.isInterruptionRequested():
+                    self.anyerror = True
+                    self.errmsg = "Download interrupted by user."
+                    break
                 saved = (
                     stream.download(output_path=str(outdir), filename=base)
                     if base
@@ -1206,6 +1238,10 @@ class DownloadWorker(QThread):
                 finalpath = Path(saved)
             else:
                 stream = yt.streams.get_highest_resolution()
+                if self.isInterruptionRequested():
+                    self.anyerror = True
+                    self.errmsg = "Download interrupted by user."
+                    break
                 saved = (
                     stream.download(output_path=str(outdir), filename=base)
                     if base
@@ -1350,30 +1386,26 @@ class TubeReaver(QWidget):
         f.addRow(QLabel("Genre:"), self.cmbtaggenre)
         f.addRow(QLabel("Cover:"), coverwidget)
 
-        btns = QHBoxLayout()
-        btns.addWidget(self.btnrun)
-        btns.addWidget(self.btnstop)
-        btns.addStretch(1)
         form.setLayout(f)
-
         self.lbltotal = QLabel("Downloaded Size\n0.00 MB")
         self.lbltotal.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.lbltotal.setStyleSheet("font-weight: 600;")
 
-        toprow = QHBoxLayout()
-        toprow.addWidget(QLabel(" "))
-        toprow.addStretch(1)
-        toprow.addWidget(self.lbltotal)
+        controlsrow = QHBoxLayout()
+        controlsrow.addWidget(self.btnrun)
+        controlsrow.addWidget(self.btnstop)
+        controlsrow.addStretch(1)
+        controlsrow.addWidget(self.lbltotal)
 
-        # Table
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Title", "URL", "Saved File", "Status", "Progress"])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["Title", "URL", "File", "Datetime", "Size", "Progress"])
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -1382,8 +1414,7 @@ class TubeReaver(QWidget):
         root = QVBoxLayout()
         root.setMenuBar(menubar)
         root.addWidget(form)
-        root.addLayout(btns)
-        root.addLayout(toprow)
+        root.addLayout(controlsrow)
         root.addWidget(self.table, stretch=1)
         self.setLayout(root)
 
@@ -1505,7 +1536,7 @@ class TubeReaver(QWidget):
         self.btnrun.setEnabled(False)
         self.worker = DownloadWorker(task, parent=self)
         self.workersignals(self.worker)
-        self.worker.startdownloads()
+        self.worker.start()
 
     # Function 'addrow'
     def addrow(self, rowkey: str, title: str, url: str, saved: str, status: str) -> int:
@@ -1519,12 +1550,13 @@ class TubeReaver(QWidget):
         self.table.setItem(r, 0, QTableWidgetItem(title))
         self.table.setItem(r, 1, QTableWidgetItem(url))
         self.table.setItem(r, 2, QTableWidgetItem(saved))
-        self.table.setItem(r, 3, QTableWidgetItem(status))
+        self.table.setItem(r, 3, QTableWidgetItem(""))
+        self.table.setItem(r, 4, QTableWidgetItem(status))
 
         bar = QProgressBar()
         bar.setRange(0, 100)
         bar.setValue(0)
-        self.table.setCellWidget(r, 4, bar)
+        self.table.setCellWidget(r, 5, bar)
 
         self.rows[rowkey] = r
         self.rowbars[rowkey] = bar
@@ -1550,7 +1582,7 @@ class TubeReaver(QWidget):
         """
         r = self.rows.get(rowkey)
         if r is not None:
-            self.table.setItem(r, 3, QTableWidgetItem(status))
+            self.table.setItem(r, 4, QTableWidgetItem(status))
 
     # Function 'setrowsaved'
     def setrowsaved(self, rowkey: str, saved_path: str) -> None:
@@ -1562,6 +1594,17 @@ class TubeReaver(QWidget):
         r = self.rows.get(rowkey)
         if r is not None:
             self.table.setItem(r, 2, QTableWidgetItem(saved_path))
+
+    # Function 'setrowmtime'
+    def setrowmtime(self, rowkey: str, mtime: str) -> None:
+        """
+        Update the 'Mtime' column for a given row identified by row key.
+        Stores the human-readable modification time string in the table cell.
+        Silently ignores unknown rows that may have been cleared earlier.
+        """
+        r = self.rows.get(rowkey)
+        if r is not None:
+            self.table.setItem(r, 3, QTableWidgetItem(mtime))
 
     # Function 'onprefs'
     def onprefs(self) -> None:
@@ -1640,7 +1683,7 @@ class TubeReaver(QWidget):
         Called repeatedly by the worker's progress callback function.
         """
         self.setrowprogress(rowkey, pct)
-        self.setrowstatus(rowkey, "Downloading…")
+        self.setrowstatus(rowkey, "Wait…")
 
     # Function 'onrowstatus'
     def onrowstatus(self, rowkey: str, message: str) -> None:
@@ -1652,14 +1695,15 @@ class TubeReaver(QWidget):
         self.setrowstatus(rowkey, message)
 
     # Function 'onrowdone'
-    def onrowdone(self, rowkey: str, saved_path: str, bytes_size: int) -> None:
+    def onrowdone(self, rowkey: str, saved_path: str, bytes_size: int, mtime: str) -> None:
         """
         Slot called when an item finishes downloading successfully.
         Marks the row as saved, sets progress to 100%, and aggregates total size.
         Updates the label showing the cumulative downloaded volume.
         """
         self.setrowprogress(rowkey, 100)
-        self.setrowstatus(rowkey, f"Saved ({SysUtils.unitsize(bytes_size)})")
+        self.setrowmtime(rowkey, mtime)
+        self.setrowstatus(rowkey, SysUtils.unitsize(bytes_size))
         self.setrowsaved(rowkey, saved_path)
         try:
             self.totalbytes += int(bytes_size)
@@ -1688,12 +1732,9 @@ class TubeReaver(QWidget):
         self.btnstop.setEnabled(False)
         self.btnrun.setEnabled(True)
 
-        # Show completion popup (like template), then fade/clear
         err = errmsg or (self._last_error_text or None)
         dlg = DialogCompleted(self, error_message=(err if not success else None))
         dlg.showcenter()
-
-        # Fade-out effect after completion (like template)
         self.fadecleaner()
 
     # Function 'fadecleaner'
@@ -1743,6 +1784,13 @@ class AppEntry:
         Exits the process with the return code from app.exec().
         """
         app = QApplication(sys.argv)
+
+        if hasattr(QGuiApplication, "setDesktopFileName"):
+            QGuiApplication.setDesktopFileName("tubereaver")
+
+        app.setApplicationName("TubeReaver")
+        app.setWindowIcon(QIcon("/usr/share/pixmaps/tubereaver.png"))
+
         win = TubeReaver()
         win.show()
         sys.exit(app.exec())
