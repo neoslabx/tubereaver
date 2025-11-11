@@ -52,10 +52,12 @@ sudo apt install -y python3-pyqt6 python3-pyqt6.qt6-tools ffmpeg
 
 ## Installation
 
-Download the latest DEB version from the [releases](https://github.com/neoslabx/tubereaver/releases/) section and use the following command:
+Download the latest DEB version from the [releases](https://github.com/neoslabx/tubereaver/releases/) section (the current version is v1.3.2) and use the following command:
 
 ```bash
-sudo dpkg -i tubereaver_*_all.deb
+cd /tmp/
+wget https://github.com/neoslabx/tubereaver/releases/download/v1.3.2/tubereaver_1.3.2_all.deb
+sudo dpkg -i tubereaver_1.3.2_all.deb
 ```
 
 * * *
